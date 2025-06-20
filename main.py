@@ -25,16 +25,23 @@ def process_drive_file():
         return jsonify({"error": "Invalid Google Drive file link"}), 400
 
     file_id = match.group(1)
-    download_url = f"https://drive.google.com/uc?id={file_id}&export=download"
 
-    # Set up temporary download directory
     download_dir = tempfile.mkdtemp(prefix='resume_dl_')
     output_path = os.path.join(download_dir, 'resume_file')
 
     try:
-        gdown.download(url=download_url, output=output_path, quiet=True, fuzzy=True)
+        gdown.download(id=file_id, output=output_path, quiet=True)
     except Exception as e:
         return jsonify({"error": f"Download failed: {str(e)}"}), 500
+
+    # Debug Log
+    print("Downloaded file path:", output_path)
+    print("File exists:", os.path.exists(output_path))
+    print("File size (KB):", os.path.getsize(output_path) / 1024)
+
+    with open(output_path, 'rb') as f:
+        head = f.read(512)
+        print("First 512 bytes of file:", head[:512])
 
     # Handle zip extraction
     if output_path.endswith(".zip"):
