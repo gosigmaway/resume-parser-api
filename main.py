@@ -1,97 +1,81 @@
 from flask import Flask, request, jsonify
-import os, re, shutil, tempfile, zipfile, pathlib
-import pandas as pd
-import gdown
+import os, re, tempfile, pathlib, zipfile
 import pdfplumber
 from docx import Document
+import gdown
 
 try:
-    import textract  # for .doc
+    import textract
 except ImportError:
     textract = None
 
 app = Flask(__name__)
 
 @app.route("/process", methods=["POST"])
-def process_drive_links():
+def process_drive_file():
     data = request.get_json()
-    links = data.get("attachment_link")
+    link = data.get("attachment_link")
 
-    if not links:
+    if not link:
         return jsonify({"error": "No attachment_link provided"}), 400
 
-    # Support single string or list of links
-    if isinstance(links, str):
-        links = [links]
+    # Extract file ID from the Google Drive file URL
+    match = re.search(r"/d/([A-Za-z0-9_-]+)", link)
+    if not match:
+        return jsonify({"error": "Invalid Google Drive file link"}), 400
 
-    output_rows = []
-    root_dl = tempfile.mkdtemp(prefix='resume_dl_')
-    print('Download folder:', root_dl)
+    file_id = match.group(1)
+    download_url = f"https://drive.google.com/uc?id={file_id}&export=download"
 
-    for idx, link in enumerate(links):
-        print(f'Processing link {idx + 1}/{len(links)}: {link}')
-        m = re.search(r'/d/([A-Za-z0-9_-]+)', link) or re.search(r'/folders/([A-Za-z0-9_-]+)', link)
-        if not m:
-            print('Could not parse id from', link)
+    # Set up temporary download directory
+    download_dir = tempfile.mkdtemp(prefix='resume_dl_')
+    output_path = os.path.join(download_dir, 'resume_file')
+
+    try:
+        gdown.download(url=download_url, output=output_path, quiet=True, fuzzy=True)
+    except Exception as e:
+        return jsonify({"error": f"Download failed: {str(e)}"}), 500
+
+    # Handle zip extraction
+    if output_path.endswith(".zip"):
+        with zipfile.ZipFile(output_path, 'r') as zf:
+            zf.extractall(download_dir)
+        os.remove(output_path)
+
+    # Find the first valid resume file
+    resume_text = ""
+    for file_path in pathlib.Path(download_dir).rglob('*'):
+        if file_path.is_dir():
             continue
 
-        file_or_folder_id = m.group(1)
-        out_dir = os.path.join(root_dl, file_or_folder_id)
-        os.makedirs(out_dir, exist_ok=True)
-
+        ext = file_path.suffix.lower()
         try:
-            gdown.download_folder(url=link, output=out_dir, quiet=True)
+            if ext == ".pdf":
+                with pdfplumber.open(str(file_path)) as pdf:
+                    resume_text = ''.join(page.extract_text() or '' for page in pdf.pages)
+            elif ext == ".docx":
+                doc = Document(str(file_path))
+                resume_text = '\n'.join(p.text for p in doc.paragraphs)
+            elif ext == ".doc" and textract:
+                resume_text = textract.process(str(file_path)).decode("utf-8", errors="ignore")
+            else:
+                continue
+
+            if resume_text.strip():
+                break  # Stop after first valid file
         except Exception as e:
-            print('Folder download failed, trying file...', e)
-            try:
-                gdown.download(id=file_or_folder_id, output=os.path.join(out_dir, 'file'), quiet=True)
-            except Exception as e2:
-                print('Download failed for', link, e2)
-                continue
+            print(f"Failed to read {file_path}: {e}")
+            continue
 
-        # Unzip files if needed
-        for path in pathlib.Path(out_dir).rglob('*'):
-            if path.is_dir():
-                continue
-            if path.suffix.lower() == '.zip':
-                unzip_dir = path.parent / (path.stem + '_unzipped')
-                os.makedirs(unzip_dir, exist_ok=True)
-                with zipfile.ZipFile(path, 'r') as zf:
-                    zf.extractall(unzip_dir)
-                path.unlink()
-
-        # Parse files
-        for file_path in pathlib.Path(out_dir).rglob('*'):
-            if file_path.is_dir():
-                continue
-            ext = file_path.suffix.lower()
-            if ext not in ['.pdf', '.docx', '.doc']:
-                continue
-            try:
-                if ext == '.pdf':
-                    with pdfplumber.open(str(file_path)) as pdf:
-                        text = ''.join(page.extract_text() or '' for page in pdf.pages)
-                elif ext == '.docx':
-                    doc = Document(str(file_path))
-                    text = '\n'.join(p.text for p in doc.paragraphs)
-                elif ext == '.doc':
-                    if textract is None:
-                        print('textract not installed; skipping .doc file', file_path)
-                        continue
-                    text = textract.process(str(file_path)).decode('utf-8', errors='ignore')
-                output_rows.append({
-                    "source_file": str(file_path),
-                    "resume_text": text[:10000]  # limit to 10k chars
-                })
-            except Exception as e:
-                print('Failed to read', file_path, e)
-
-    return jsonify({"resumes": output_rows})
+    return jsonify({
+        "resume_text": resume_text
+    })
 
 
 @app.route("/", methods=["GET"])
 def home():
     return "Resume parser is running. Use POST /process with {attachment_link}", 200
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3000)
