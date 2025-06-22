@@ -3,7 +3,7 @@ import os, re, tempfile, pathlib, zipfile
 import fitz  # PyMuPDF
 from docx import Document
 import gdown
-import magic
+import filetype
 
 try:
     import textract
@@ -61,7 +61,9 @@ def process_drive_file():
         ext = ""
 
         # Detect file type using magic (MIME type)
-        mime = magic.from_file(str(file_path), mime=True)
+        kind = filetype.guess(str(file_path))
+        mime = kind.mime if kind else "application/octet-stream"
+
         print(f"Detected MIME type: {mime}")
 
         # Map MIME type to extension
@@ -116,4 +118,5 @@ def home():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
