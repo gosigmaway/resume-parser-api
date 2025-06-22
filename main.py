@@ -25,11 +25,16 @@ except Exception as e:
     loaded_model = None
 
 # --- Downloads ---
+# Use local nltk_data if set
+nltk_data_path = os.getenv("NLTK_DATA", "./nltk_data")
+nltk.data.path.append(nltk_data_path)
+
 try:
-    nltk.data.find('corpora/stopwords')
+    stop_words = set(stopwords.words("english"))
 except LookupError:
-    nltk.download('stopwords')
-stop_words = set(stopwords.words('english'))
+    raise RuntimeError(
+        "Missing NLTK stopwords. Make sure it's downloaded to nltk_data during build."
+    )
 
 try:
     nlp = spacy.load('en_core_web_sm')
