@@ -1,8 +1,9 @@
 from flask import Flask, request, jsonify
 import os, re, tempfile, pathlib, zipfile
-import pdfplumber
+import fitz  # PyMuPDF
 from docx import Document
 import gdown
+import magic
 
 try:
     import textract
@@ -10,6 +11,7 @@ except ImportError:
     textract = None
 
 app = Flask(__name__)
+
 
 @app.route("/process", methods=["POST"])
 def process_drive_file():
@@ -52,19 +54,50 @@ def process_drive_file():
     # Find the first valid resume file
     resume_text = ""
     for file_path in pathlib.Path(download_dir).rglob('*'):
+        print(file_path)
         if file_path.is_dir():
             continue
 
-        ext = file_path.suffix.lower()
+        ext = ""
+
+        # Detect file type using magic (MIME type)
+        mime = magic.from_file(str(file_path), mime=True)
+        print(f"Detected MIME type: {mime}")
+
+        # Map MIME type to extension
+        if mime == "application/pdf":
+            ext = ".pdf"
+        elif mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            ext = ".docx"
+        elif mime in ["application/msword", "application/vnd.ms-word.document.macroenabled.12"]:
+            ext = ".doc"
+        else:
+            print(f"Unsupported MIME type: {mime}")
+
+        print(f"Processing file: {file_path} with extension: {ext}")
         try:
             if ext == ".pdf":
-                with pdfplumber.open(str(file_path)) as pdf:
-                    resume_text = ''.join(page.extract_text() or '' for page in pdf.pages)
+                doc = fitz.open(str(file_path))
+                print("="*30, "PDF DEBUG", "="*30)
+                print(f"Opened PDF: {file_path}, Pages: {doc.page_count}")
+
+                resume_text = ""
+                for i, page in enumerate(doc):
+                    blocks = page.get_text("dict")["blocks"]
+                    for block in blocks:
+                        if "lines" in block:
+                            for line in block["lines"]:
+                                for span in line["spans"]:
+                                    resume_text += span["text"] + " "
+                doc.close()
+                print(f"Total extracted text length: {len(resume_text)} characters")
+                print("="*75)
             elif ext == ".docx":
                 doc = Document(str(file_path))
                 resume_text = '\n'.join(p.text for p in doc.paragraphs)
             elif ext == ".doc" and textract:
-                resume_text = textract.process(str(file_path)).decode("utf-8", errors="ignore")
+                resume_text = textract.process(str(file_path)).decode(
+                    "utf-8", errors="ignore")
             else:
                 continue
 
@@ -74,9 +107,7 @@ def process_drive_file():
             print(f"Failed to read {file_path}: {e}")
             continue
 
-    return jsonify({
-        "resume_text": resume_text
-    })
+    return jsonify({"resume_text": resume_text})
 
 
 @app.route("/", methods=["GET"])
