@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: zapier-resume-parser
+    env: python
+    buildCommand: poetry install --no-root
+    startCommand: poetry run gunicorn main:app --bind 0.0.0.0:$PORT
+    runtime: python
+    pythonVersion: 3.11
+    plan: free
