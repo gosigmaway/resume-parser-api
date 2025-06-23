@@ -225,7 +225,3 @@ def process_drive_file():
 @app.route("/", methods=["GET"])
 def home():
     return "Resume parser is running. Use POST /process with {attachment_link}", 200
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
